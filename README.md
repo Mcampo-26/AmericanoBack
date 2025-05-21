@@ -2,11 +2,11 @@
 
 Backend del sistema de gestión para el Bar Americano, desarrollado con Node.js, Express y MongoDB. Diseñado para soportar operaciones en tiempo real, integraciones con servicios externos y múltiples módulos funcionales.
 📦 Módulos principales
+
 🪑 Salón
 
-    Gestión de mesas, pedidos y comensales
 
-    Control de estados de mesa y pago
+   
 
 🛵 Delivery
 
