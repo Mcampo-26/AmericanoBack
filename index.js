@@ -5,7 +5,13 @@ import cors from 'cors';
 import morgan from 'morgan';
 
 import { Server } from 'socket.io';
-
+import ordenesRoutes from './src/Routes/Ordenes/index.js';
+import proveedoresRoutes from './src/Routes/Proveedores/index.js';
+import productosRoutes from "./src/Routes/Producto/index.js";
+import tipoProductoRoutes from "./src/Routes/Producto/TipoProducto.js";
+import unidadesRoutes from "./src/Routes/UnidadMedida/index.js";
+import estadoOrdenRoutes from "./src//Routes/Ordenes/estado.js";
+import inventarioRoutes from './src/Routes/Inventario/index.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -40,6 +46,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 
+
+app.use('/ordenes', ordenesRoutes);
+app.use('/proveedores', proveedoresRoutes);
+app.use("/productos", productosRoutes);
+app.use("/tipos", tipoProductoRoutes);
+app.use("/unidades", unidadesRoutes);
+app.use("/estados", estadoOrdenRoutes);
+app.use('/inventario', inventarioRoutes);
 
 // WebSocket connection
 io.on('connection', (socket) => {
