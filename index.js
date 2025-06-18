@@ -8,7 +8,7 @@ import { Server } from 'socket.io';
 import ordenesRoutes from './src/Routes/Ordenes/index.js';
 import proveedoresRoutes from './src/Routes/Proveedores/index.js';
 import productosRoutes from "./src/Routes/Producto/index.js";
-import tipoProductoRoutes from "./src/Routes/Producto/TipoProducto.js";
+import tipoProductoRoutes from "./src/Routes/Producto/tipoProducto.js";
 import unidadesRoutes from "./src/Routes/UnidadMedida/index.js";
 import estadoOrdenRoutes from "./src//Routes/Ordenes/estado.js";
 import inventarioRoutes from './src/Routes/Inventario/index.js';
@@ -18,7 +18,7 @@ const server = http.createServer(app);
 
 
 // 👉 CORS general para Express
-const allowedOrigins = ['http://localhost:5173', 'https://thepointboris.netlify.app'];
+const allowedOrigins = ['http://localhost:5173', 'https://americanobar.netlify.app'];
 
 app.use(cors({
   origin: (origin, callback) => {
