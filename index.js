@@ -12,7 +12,9 @@ import tipoProductoRoutes from "./src/Routes/Producto/tipoProducto.js";
 import unidadesRoutes from "./src/Routes/UnidadMedida/index.js";
 import estadoOrdenRoutes from "./src//Routes/Ordenes/estado.js";
 import inventarioRoutes from './src/Routes/Inventario/index.js';
-
+import usuariosRoutes from './src/Routes/Usuarios/index.js'
+import rolesRoutes from './src/Routes/Roles/index.js';
+import permisosRoutes from './src/Routes/Permisos/index.js'
 const app = express();
 const server = http.createServer(app);
 
@@ -54,7 +56,9 @@ app.use("/tipos", tipoProductoRoutes);
 app.use("/unidades", unidadesRoutes);
 app.use("/estados", estadoOrdenRoutes);
 app.use('/inventario', inventarioRoutes);
-
+app.use('/usuarios', usuariosRoutes);
+app.use('/roles', rolesRoutes);
+app.use('/permisos', permisosRoutes);
 // WebSocket connection
 io.on('connection', (socket) => {
   console.log('🟢 Cliente conectado:', socket.id);
