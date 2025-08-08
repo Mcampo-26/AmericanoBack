@@ -17,8 +17,10 @@ const permisosSchema = new mongoose.Schema({
   viewEstados: { type: Boolean, default: false },
   viewReportes: { type: Boolean, default: false },
   viewClientes: { type: Boolean, default: false },
+  viewReceta: { type: Boolean, default: false },
   viewConfiguracion: { type: Boolean, default: false },
 }, { _id: false });
+
 
 // Esquema del rol
 const roleSchema = new mongoose.Schema({

@@ -134,7 +134,7 @@ export const verifyUsuario = async (req, res) => {
 export const loginUsuario = async (req, res) => {
     try {
       const { email, password } = req.body;
-      const usuario = await Usuario.findOne({ email }).populate('role');
+      const usuario = await Usuario.findOne({ email }).populate('role', 'name permisos');
   
       if (!usuario) {
         return res.status(401).json({ message: 'Credenciales inválidas' });

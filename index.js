@@ -3,7 +3,6 @@ import { dbConnect } from './src/database/config.js';
 import http from 'http';
 import cors from 'cors';
 import morgan from 'morgan';
-
 import { Server } from 'socket.io';
 import ordenesRoutes from './src/Routes/Ordenes/index.js';
 import proveedoresRoutes from './src/Routes/Proveedores/index.js';
@@ -15,6 +14,7 @@ import inventarioRoutes from './src/Routes/Inventario/index.js';
 import usuariosRoutes from './src/Routes/Usuarios/index.js'
 import rolesRoutes from './src/Routes/Roles/index.js';
 import permisosRoutes from './src/Routes/Permisos/index.js'
+import recetasRoutes from "./src/Routes/Receta/index.js";
 const app = express();
 const server = http.createServer(app);
 
@@ -59,6 +59,8 @@ app.use('/inventario', inventarioRoutes);
 app.use('/usuarios', usuariosRoutes);
 app.use('/roles', rolesRoutes);
 app.use('/permisos', permisosRoutes);
+app.use('/recetas', recetasRoutes);
+
 // WebSocket connection
 io.on('connection', (socket) => {
   console.log('🟢 Cliente conectado:', socket.id);
