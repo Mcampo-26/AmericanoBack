@@ -15,6 +15,7 @@ import usuariosRoutes from './src/Routes/Usuarios/index.js'
 import rolesRoutes from './src/Routes/Roles/index.js';
 import permisosRoutes from './src/Routes/Permisos/index.js'
 import recetasRoutes from "./src/Routes/Receta/index.js";
+import procesosProduccionRoutes from "./src/Routes/ProcesoProduccion/index.js";
 const app = express();
 const server = http.createServer(app);
 
@@ -60,18 +61,19 @@ app.use('/usuarios', usuariosRoutes);
 app.use('/roles', rolesRoutes);
 app.use('/permisos', permisosRoutes);
 app.use('/recetas', recetasRoutes);
+app.use('/procesos', procesosProduccionRoutes);
+
 
 // WebSocket connection
 io.on('connection', (socket) => {
   console.log('🟢 Cliente conectado:', socket.id);
 
-  // 🔗 Maneja la unión a una sala
+  // Unir por defecto a la sala "procesos"
+  socket.join("procesos");
+
   socket.on("joinRoom", async (roomName) => {
     socket.join(roomName);
-    console.log(`✅ Socket ${socket.id} se unió a la sala ${roomName}`);
-  
-    const socketsInRoom = await io.in(roomName).allSockets();
-    console.log("📦 Sockets actuales en la sala:", Array.from(socketsInRoom));
+    console.log(`✅ ${socket.id} -> sala ${roomName}`);
   });
 
   socket.on('disconnect', () => {

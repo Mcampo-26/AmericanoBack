@@ -131,10 +131,11 @@ export const verifyUsuario = async (req, res) => {
 
   
   // 🔐 LOGIN de usuario
-export const loginUsuario = async (req, res) => {
+  export const loginUsuario = async (req, res) => {
     try {
       const { email, password } = req.body;
-      const usuario = await Usuario.findOne({ email }).populate('role', 'name permisos');
+      // ✅ POPULATE CORRECTO: Traemos el rol completo
+      const usuario = await Usuario.findOne({ email }).populate('role'); 
   
       if (!usuario) {
         return res.status(401).json({ message: 'Credenciales inválidas' });
@@ -145,17 +146,19 @@ export const loginUsuario = async (req, res) => {
         return res.status(401).json({ message: 'Credenciales inválidas' });
       }
   
+      // ✅ TOKEN MÁS COMPLETO: Guardamos el objeto de rol completo si existe.
       const token = jwt.sign({
         id: usuario._id,
         nombre: usuario.nombre,
         email: usuario.email,
-        role: usuario.role?.name || null,
-      }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        role: usuario.role ? { name: usuario.role.name, permisos: usuario.role.permisos } : null,
+      }, process.env.JWT_SECRET, { expiresIn: '8h' }); // Aumentamos la duración
   
-      res.json({ token, usuario });
+      // ✅ RESPUESTA CONSISTENTE: Devolvemos el token y el objeto usuario completo.
+      res.json({ token, usuario: usuario.toObject() });
   
     } catch (error) {
+      console.error("Error en login:", error);
       res.status(500).json({ message: 'Error durante el login' });
     }
   };
-  
