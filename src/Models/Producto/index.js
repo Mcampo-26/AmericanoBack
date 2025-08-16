@@ -1,13 +1,5 @@
-import mongoose from "mongoose";
+import Producto from "../../Models/Producto/producto.js";
+import TipoProducto from "../../Models/Producto/tipoProducto.js";
+import Ingrediente from "../../Models/Producto/Ingrediente.js";
 
-const productoSchema = new mongoose.Schema({
-  nombre: { type: String, required: true },
-  descripcion: String,
-  esVendibleDirectamente: Boolean,
-  esIngredientePotencial: Boolean,
-  esDesperdicio: Boolean,
-  tipoProducto: { type: mongoose.Schema.Types.ObjectId, ref: "TipoProducto" }
-});
-
-const Producto = mongoose.model("Producto", productoSchema);
-export default Producto;
+export { Producto, TipoProducto, Ingrediente };

@@ -60,28 +60,33 @@ export const obtenerRecetaPorId = async (req, res) => {
 export const actualizarReceta = async (req, res) => {
   try {
     const { id } = req.params;
-    const { nombre, descripcion, ingredientes, tiempoProduccion } = req.body; // ⬅️ lo recibimos
+    const data = req.body;
 
-    const recetaActualizada = await Receta.findByIdAndUpdate(
-      id,
-      {
-        nombre,
-        descripcion,
-        ingredientes,
-        tiempoProduccion: Number(tiempoProduccion) || 0 // ⬅️ guardamos minutos
-      },
-      { new: true }
-    );
+    // normalizar (evita duplicados por espacios/case)
+    if (data.nombre) data.nombre = data.nombre.trim();
 
-    if (!recetaActualizada) {
-      return res.status(404).json({ message: "Receta no encontrada." });
+    // si cambia el nombre, validar contra otros docs
+    if (data.nombre) {
+      const existe = await Receta.findOne({
+        nombre: data.nombre,
+        _id: { $ne: id }
+      });
+      if (existe) {
+        return res.status(409).json({ message: 'Ya existe una receta con ese nombre' });
+      }
     }
 
-    res.status(200).json(recetaActualizada);
+    const receta = await Receta.findByIdAndUpdate(id, data, {
+      new: true,
+      runValidators: true,
+      context: 'query',
+    });
 
-  } catch (error) {
-    console.error("❌ Error al actualizar receta:", error);
-    res.status(500).json({ message: "Error al actualizar receta." });
+    if (!receta) return res.status(404).json({ message: 'No encontrada' });
+    res.json(receta);
+  } catch (e) {
+    console.error('ERROR actualizarReceta:', e);
+    res.status(500).json({ message: 'Error al actualizar' });
   }
 };
 
