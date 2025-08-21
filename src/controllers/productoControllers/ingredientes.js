@@ -1,4 +1,3 @@
-// src/controllers/ingredientesControllers/index.js
 import { Ingrediente } from "../../Models/Producto/index.js";
 
 // helpers de populate
