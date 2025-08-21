@@ -1,5 +1,6 @@
 import { Ingrediente } from "../../Models/Producto/index.js";
 
+
 // helpers de populate
 const populateRefs = [
   { path: "producto", select: "nombre codigo tipoProducto", populate: { path: "tipoProducto", select: "nombreTipo" } },
