@@ -1,3 +1,4 @@
+// routes/proveedores/index.js
 import express from "express";
 import {
   crearProveedor,
