@@ -33,7 +33,7 @@ const ingredienteSchema = new mongoose.Schema({
   stock: stockSchema,
   costos: costosSchema,
   proveedores: proveedoresSchema,
-
+  observaciones: { type: String, trim: true, default: "" },
   activo: { type: Boolean, default: true },
 }, { timestamps: true });
 
