@@ -1,3 +1,4 @@
+// src/Models/Compras/index.js
 import mongoose, { Schema, Types } from "mongoose";
 
 const ItemSchema = new Schema(
@@ -10,22 +11,23 @@ const ItemSchema = new Schema(
   { _id: false }
 );
 
-const OrdenDeCompraSchema = new Schema(
+const CompraSchema = new Schema(
   {
     proveedor: { type: Types.ObjectId, ref: "Proveedor", required: true },
-    domicilioEntrega: { type: String, default: "" },
-    telefonoProveedor: { type: String, default: "" },
-    responsableProveedor: { type: String, default: "" },
+    fechaCompra: { type: Date, default: Date.now },
     fechaEntregaEstimada: { type: Date },
     observaciones: { type: String, default: "" },
 
-    // 👇 ref al modelo correcto
+    items: [ItemSchema],
+
+    // 👇 NOMBRE DE MODELO CORRECTO
     estado: { type: Types.ObjectId, ref: "EstadoOrden", required: true },
 
-    items: [ItemSchema],
+    // id de la orden origen (opcional, para borrar/traquear)
+    origenOrden: { type: Types.ObjectId, ref: "OrdenDeCompra" },
   },
   { timestamps: true }
 );
 
-export default mongoose.models.OrdenDeCompra ||
-  mongoose.model("OrdenDeCompra", OrdenDeCompraSchema);
+// evitar “OverwriteModelError” en hot-reload
+export default mongoose.models.Compra || mongoose.model("Compra", CompraSchema);
