@@ -18,6 +18,7 @@ import procesosProduccionRoutes from "./src/Routes/ProcesoProduccion/index.js";
 import ingredientesRoutes from './src/Routes/Producto/ingredientes.js';
 import stockRoutes from './src/Routes/Stock/index.js';
 import movimientosRoutes from './src/Routes/movimientosRoutes/index.js';
+import comprasRoutes from './src/Routes/Compras/index.js'
 
 const app = express();
 const server = http.createServer(app);
@@ -67,6 +68,7 @@ app.use('/procesos', procesosProduccionRoutes);
 app.use('/ingredientes', ingredientesRoutes);
 app.use('/stock', stockRoutes);
 app.use('/movimientos', movimientosRoutes);
+app.use('/compras', comprasRoutes);
 
 
 // WebSocket connection

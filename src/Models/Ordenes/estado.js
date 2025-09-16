@@ -1,8 +1,12 @@
-import mongoose from "mongoose";
+// src/Models/Ordenes/estado.js
+import mongoose, { Schema } from "mongoose";
 
-const estadoOrdenSchema = new mongoose.Schema({
-  estado: { type: String, required: true, unique: true }
-});
+const EstadoOrdenSchema = new Schema(
+  { estado: { type: String, required: true, unique: true, trim: true } },
+  { timestamps: true }
+);
 
-const EstadoOrdenDeCompra = mongoose.model("EstadoOrdenDeCompra", estadoOrdenSchema);
-export default EstadoOrdenDeCompra;
+const EstadoOrden =
+  mongoose.models.EstadoOrden || mongoose.model("EstadoOrden", EstadoOrdenSchema);
+
+export default EstadoOrden;
