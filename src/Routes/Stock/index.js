@@ -7,24 +7,27 @@ import {
   createStock,
   updateStock,
   deleteStock,
-  movimientoStock // aplica un movimiento y actualiza stock
+  movimientoStock,
+  listLotes
 } from "../../controllers/stockControllers/index.js";
-
 import { authMiddleware } from "../../Middleware/authMiddleware.js";
 
 const router = express.Router();
 
-// Rutas públicas (si querés que el frontend consulte stock sin login)
+// públicas
 router.get("/all", listStock);
 router.get("/by-producto/:productoId", getStockByProducto);
 
-// Rutas protegidas
+// ⚠️ específicas SIEMPRE antes de los params genéricos
+router.get("/lotes", authMiddleware, listLotes);
+
+// protegidas
 router.get("/:id", authMiddleware, getStock);
 router.post("/create", authMiddleware, createStock);
 router.put("/update/:id", authMiddleware, updateStock);
 router.delete("/delete/:id", authMiddleware, deleteStock);
 
-// Movimientos de stock
+// movimientos
 router.post("/:productoId/movimiento", authMiddleware, movimientoStock);
 
 export default router;

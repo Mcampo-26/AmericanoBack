@@ -1,4 +1,6 @@
+import mongoose from 'mongoose'
 import ProcesoProduccion from "../../Models/ProcesoProduccion/index.js";
+import { descontarPorReceta } from "../../Service/stock.js";
 
 /**
  * GET /procesos
@@ -136,21 +138,64 @@ export const reanudarProceso = async (req, res) => {
  * Marca finalizado y acumula si está corriendo
  */
 export const finalizarProceso = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
   try {
-    const p = await ProcesoProduccion.findById(req.params.id);
-    if (!p) return res.status(404).json({ message: "Proceso no encontrado" });
+    console.log("📥 [API] PATCH /procesos/:id/finalizar body:", req.body);
+
+    const p = await ProcesoProduccion.findById(req.params.id).session(session);
+    if (!p) {
+      console.warn("❌ [API] Proceso no encontrado:", req.params.id);
+      return res.status(404).json({ message: "Proceso no encontrado" });
+    }
 
     if (p.status === "en_proceso") {
       p.acumuladoMs += Date.now() - p.startedAt.getTime();
     }
     p.status = "finalizado";
-    await p.save();
+    await p.save({ session });
+    console.log("✅ [API] Proceso marcado como finalizado:", p._id.toString());
 
-    req.app.get("io")?.emit("proceso:updated", p);
-    res.json(p);
+    // descuento de stock
+    const cantidadProducida = Number(req.body?.cantidadProducida || 1);
+    let result = null;
+    if (p.recetaId) {
+      console.log("⚙️ [STOCK] Descontando receta:", {
+        recetaId: p.recetaId.toString(),
+        cantidadProducida
+      });
+      result = await descontarPorReceta(
+        {
+          recetaId: p.recetaId,
+          cantidad: cantidadProducida,
+          usuarioId: req.user?.id,
+          referenciaId: p._id,
+          referenciaTipo: "ProcesoProduccion",
+        },
+        { session }
+      );
+      console.log("📊 [STOCK] Afectados:", result.afectados);
+    } else {
+      console.warn("⚠️ [API] Proceso sin recetaId, no se descuenta stock.");
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    // sockets
+    const io = req.app.get("io") || req.app.locals.io;
+    io?.emit?.("proceso:updated", p);
+    if (result?.afectados?.length) {
+      io?.emit?.("stockUpdated", result.afectados);
+      console.log("📡 [SOCKET] stockUpdated emitido:", result.afectados);
+    }
+
+    res.json({ ok: true, proceso: p, stock: result });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ message: "Error al finalizar proceso" });
+    await session.abortTransaction();
+    session.endSession();
+    console.error("💥 [API] Error al finalizar proceso:", e);
+    res.status(500).json({ message: e.message || "Error al finalizar proceso" });
   }
 };
 

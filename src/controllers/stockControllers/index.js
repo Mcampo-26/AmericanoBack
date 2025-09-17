@@ -21,16 +21,21 @@ export const listStock = async (req, res) => {
 /** GET /stock/:id */
 export const getStock = async (req, res) => {
   try {
-    const s = await Stock.findById(req.params.id).populate(
-      "producto",
-      "nombre codigo codigoBarras"
-    );
+    const s = await Stock.findById(req.params.id)
+      .populate("producto", "nombre codigo codigoBarras");
     if (!s) return res.status(404).json({ error: "Stock no encontrado" });
-    res.json(s);
+
+    // 👇 evita 304 y cache del navegador/proxy
+    res.set('Cache-Control', 'no-store, max-age=0, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+
+    return res.json(s);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    return res.status(500).json({ error: e.message });
   }
 };
+
 
 /** GET /stock/by-producto/:productoId */
 export const getStockByProducto = async (req, res) => {
@@ -120,5 +125,102 @@ export const movimientoStock = async (req, res) => {
     await session.abortTransaction();
     session.endSession();
     res.status(400).json({ error: e.message });
+  }
+};
+
+
+
+
+export const listLotes = async (req, res) => {
+  try {
+    const { q, productoId, soloConStock } = req.query;
+    const match = {};
+    if (productoId && mongoose.isValidObjectId(productoId)) {
+      match.producto = new mongoose.Types.ObjectId(productoId);
+    }
+
+    const pipe = [
+      { $match: match },
+      { $unwind: '$lotes' },
+      ...(soloConStock === 'true' ? [{ $match: { 'lotes.cantidad': { $gt: 0 } } }] : []),
+
+      { $lookup: { from: 'productos', localField: 'producto', foreignField: '_id', as: 'prod' } },
+      { $unwind: '$prod' },
+
+      { $project: {
+        _id: 0,
+        productoId: '$producto',
+        productoNombre: '$prod.nombre',
+        productoCodigo: '$prod.codigo',
+        loteCodigo: '$lotes.codigo',
+        fechaVencimiento: '$lotes.fechaVencimiento',
+        cantidad: '$lotes.cantidad',
+        cantidadInicial: '$lotes.cantidadInicial',
+        costoUnitarioLote: '$lotes.costoUnitario',
+        origen: '$lotes.origen',
+        referenciaTipo: '$lotes.referenciaTipo',
+        referenciaId: '$lotes.referenciaId',
+        createdBy: '$lotes.createdBy',
+        createdAt: '$lotes.createdAt',
+        updatedAt: '$lotes.updatedAt'
+      }},
+
+      { $lookup: {
+        from: 'movimientostocks',
+        let: { pid: '$productoId', code: '$loteCodigo' },
+        pipeline: [
+          { $match: { $expr: { $and: [
+            { $eq: ['$producto', '$$pid'] },
+            { $eq: ['$loteCodigo', '$$code'] }
+          ]}} },
+          { $sort: { createdAt: -1, _id: -1 } },
+          { $group: { _id: null,
+            totalEntradas:   { $sum: { $cond: [{ $gt: ['$cantidad', 0] }, '$cantidad', 0] } },
+            totalSalidasAbs: { $sum: { $cond: [{ $lt: ['$cantidad', 0] }, { $abs: '$cantidad' }, 0] } },
+            last: { $first: '$$ROOT' }
+          } }
+        ],
+        as: 'movAgg'
+      }},
+      { $unwind: { path: '$movAgg', preserveNullAndEmptyArrays: true } },
+
+      { $addFields: {
+        cantidadInicialCalc: { $ifNull: ['$cantidadInicial', '$movAgg.totalEntradas'] },
+        cantidadDescontada: {
+          $cond: [{ $ne: ['$cantidadInicial', null] },
+            { $subtract: ['$cantidadInicial', '$cantidad'] },
+            '$movAgg.totalSalidasAbs'
+        ]},
+        ultimoMovimiento: {
+          tipo: '$movAgg.last.tipo',
+          cantidad: '$movAgg.last.cantidad',
+          unidad: '$movAgg.last.unidad',
+          fecha: '$movAgg.last.createdAt',
+          usuario: '$movAgg.last.usuario',
+          notas: '$movAgg.last.notas',
+          referenciaTipo: '$movAgg.last.referenciaTipo',
+          referenciaId: '$movAgg.last.referenciaId',
+          costoUnitario: '$movAgg.last.costoUnitario'
+        }
+      }},
+
+      ...(q ? [{
+        $match: { $or: [
+          { productoNombre: { $regex: q, $options: 'i' } },
+          { loteCodigo: { $regex: q, $options: 'i' } }
+        ]}
+      }] : []),
+
+      { $sort: { updatedAt: -1 } }
+    ];
+
+    res.set('Cache-Control','no-store, max-age=0, must-revalidate');
+    res.set('Pragma','no-cache'); res.set('Expires','0');
+
+    const data = await Stock.aggregate(pipe);
+    return res.json(data);
+  } catch (e) {
+    console.error('listLotes error', e);
+    return res.status(500).json({ message: 'Error al listar lotes' });
   }
 };

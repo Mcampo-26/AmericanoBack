@@ -1,12 +1,14 @@
+// models/Producto.js
 import mongoose from "mongoose";
 
-// Subdocs
 const stockSchema = new mongoose.Schema({
   controlaStockPropio: { type: Boolean, default: true },
   stockActual: { type: Number, default: 0 },
   stockMinimo: { type: Number, default: 0 },
   stockMaximo: { type: Number, default: 0 },
-  unidadVenta: { type: String, enum: ["Un","Kg","Gr","Lt","Ml","Cc"], default: "Un" },
+
+  // 🔁 CAMBIO: de enum String → ObjectId a Unidad
+  unidadVenta: { type: mongoose.Schema.Types.ObjectId, ref: "Unidad", default: null },
 }, { _id: false });
 
 const preciosSchema = new mongoose.Schema({
@@ -18,10 +20,11 @@ const preciosSchema = new mongoose.Schema({
   margenSugerido: { type: Number, default: 0 },
 }, { _id: false });
 
+// (si querés también dinámica la de producción, hacé lo mismo aquí)
 const produccionSchema = new mongoose.Schema({
   esElaborado: { type: Boolean, default: false },
   recetaBase: { type: mongoose.Schema.Types.ObjectId, ref: "Receta" },
-  unidadOutput: { type: String, enum: ["Un","Kg","Gr","Lt","Ml","Cc"], default: "Un" },
+  unidadOutput: { type: String, enum: ["Un","Kg","Gr","Lt","Ml","Cc"], default: "Un" }, // o ref si querés
   tasaMermaPct: { type: Number, default: 0 },
   esIngredientePotencial: { type: Boolean, default: false },
   esDesperdicio: { type: Boolean, default: false },
@@ -32,7 +35,6 @@ const proveedoresSchema = new mongoose.Schema({
   proveedoresAlternativos: [{ type: mongoose.Schema.Types.ObjectId, ref: "Proveedor" }],
 }, { _id: false });
 
-// Schema principal
 const productoSchema = new mongoose.Schema({
   nombre: { type: String, required: true, trim: true },
   descripcion: { type: String, default: "" },
@@ -47,10 +49,8 @@ const productoSchema = new mongoose.Schema({
   activo: { type: Boolean, default: true },
 }, { timestamps: true });
 
-// Índices
 productoSchema.index({ nombre: 1 }, { unique: true, partialFilterExpression: { activo: true } });
 productoSchema.index({ codigo: 1 }, { unique: true, sparse: true });
 productoSchema.index({ codigoBarras: 1 }, { unique: true, sparse: true });
 
-const Producto = mongoose.models.Producto || mongoose.model("Producto", productoSchema);
-export default Producto;
+export default mongoose.models.Producto || mongoose.model("Producto", productoSchema);
