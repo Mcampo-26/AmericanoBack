@@ -17,7 +17,7 @@ const router = express.Router();
 // públicas
 router.get("/all", listStock);
 router.get("/by-producto/:productoId", getStockByProducto);
-
+router.get("/", getStock);
 // ⚠️ específicas SIEMPRE antes de los params genéricos
 router.get("/lotes", authMiddleware, listLotes);
 

@@ -1,6 +1,11 @@
 import mongoose from 'mongoose'
 import ProcesoProduccion from "../../Models/ProcesoProduccion/index.js";
-import { descontarPorReceta } from "../../Service/stock.js";
+// controllers
+
+import MovimientoStock from '../../Models/MovimientoStock/index.js';
+import { applyMovimiento, descontarPorReceta } from '../../Service/stock.js';
+
+import Receta   from '../../Models/Receta/index.js';
 
 /**
  * GET /procesos
@@ -133,73 +138,6 @@ export const reanudarProceso = async (req, res) => {
   }
 };
 
-/**
- * PATCH /procesos/:id/finalizar
- * Marca finalizado y acumula si está corriendo
- */
-export const finalizarProceso = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-  try {
-    console.log("📥 [API] PATCH /procesos/:id/finalizar body:", req.body);
-
-    const p = await ProcesoProduccion.findById(req.params.id).session(session);
-    if (!p) {
-      console.warn("❌ [API] Proceso no encontrado:", req.params.id);
-      return res.status(404).json({ message: "Proceso no encontrado" });
-    }
-
-    if (p.status === "en_proceso") {
-      p.acumuladoMs += Date.now() - p.startedAt.getTime();
-    }
-    p.status = "finalizado";
-    await p.save({ session });
-    console.log("✅ [API] Proceso marcado como finalizado:", p._id.toString());
-
-    // descuento de stock
-    const cantidadProducida = Number(req.body?.cantidadProducida || 1);
-    let result = null;
-    if (p.recetaId) {
-      console.log("⚙️ [STOCK] Descontando receta:", {
-        recetaId: p.recetaId.toString(),
-        cantidadProducida
-      });
-      result = await descontarPorReceta(
-        {
-          recetaId: p.recetaId,
-          cantidad: cantidadProducida,
-          usuarioId: req.user?.id,
-          referenciaId: p._id,
-          referenciaTipo: "ProcesoProduccion",
-        },
-        { session }
-      );
-      console.log("📊 [STOCK] Afectados:", result.afectados);
-    } else {
-      console.warn("⚠️ [API] Proceso sin recetaId, no se descuenta stock.");
-    }
-
-    await session.commitTransaction();
-    session.endSession();
-
-    // sockets
-    const io = req.app.get("io") || req.app.locals.io;
-    io?.emit?.("proceso:updated", p);
-    if (result?.afectados?.length) {
-      io?.emit?.("stockUpdated", result.afectados);
-      console.log("📡 [SOCKET] stockUpdated emitido:", result.afectados);
-    }
-
-    res.json({ ok: true, proceso: p, stock: result });
-  } catch (e) {
-    await session.abortTransaction();
-    session.endSession();
-    console.error("💥 [API] Error al finalizar proceso:", e);
-    res.status(500).json({ message: e.message || "Error al finalizar proceso" });
-  }
-};
-
-
 
 export const actualizarProcesoParcial = async (req, res) => {
   try {
@@ -258,5 +196,92 @@ export const eliminarProceso = async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ message: "Error al eliminar proceso" });
+  }
+};
+
+
+export const finalizarProceso = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const p = await ProcesoProduccion.findById(req.params.id).session(session);
+    if (!p) return res.status(404).json({ message: 'Proceso no encontrado' });
+
+    // ✅ Idempotencia: si ya está finalizado o ya hay movimientos de este proceso, no hagas nada
+    const yaAplicado =
+      p.status === 'finalizado' ||
+      (await MovimientoStock.exists({
+        referenciaTipo: 'ProcesoProduccion',
+        referenciaId: p._id
+      }).session(session));
+
+    if (yaAplicado) {
+      await session.commitTransaction(); session.endSession();
+      return res.json({ ok: true, proceso: p, stock: null, alreadyFinalized: true });
+    }
+
+    // marcar finalizado (acumula si estaba corriendo)
+    if (p.status === 'en_proceso') {
+      p.acumuladoMs += Date.now() - p.startedAt.getTime();
+    }
+    p.status = 'finalizado';
+    await p.save({ session });
+
+    // ===== STOCK =====
+    const cantidadProducida = Number(req.body?.cantidadProducida || 1);
+
+    // 1) Descontar insumos (escala por receta, si no querés escalar, pasa 1)
+    let result = null;
+    if (p.recetaId) {
+      result = await descontarPorReceta(
+        {
+          recetaId: p.recetaId,
+          cantidad: cantidadProducida, // ó 1 si no querés que dependa del rinde
+          usuarioId: req.user?.id,
+          referenciaId: p._id,
+          referenciaTipo: 'ProcesoProduccion',
+        },
+        { session }
+      );
+    }
+
+    // 2) Entrada del producto final (opcional)
+    const recetaDoc = p.recetaId
+      ? await Receta.findById(p.recetaId).select('productoFinal unidadOutput').lean()
+      : null;
+
+    const productoFinalId =
+      req.body.productoFinalId || recetaDoc?.productoFinal || p.productoFinal || null;
+
+    let entradaFinal = null;
+    if (productoFinalId) {
+      entradaFinal = await applyMovimiento(
+        {
+          productoId: productoFinalId,
+          tipo: 'produccion',
+          cantidad: +cantidadProducida,
+          unidad: req.body.unidadOutput || recetaDoc?.unidadOutput || 'Un',
+          loteCodigo: req.body.loteSalida || undefined,
+          fechaVencimiento: req.body.fechaVencimientoSalida || undefined,
+          referenciaTipo: 'ProcesoProduccion',
+          referenciaId: p._id,
+          notas: `Producción x${cantidadProducida}`,
+          usuarioId: req.user?.id,
+        },
+        { session }
+      );
+    }
+
+    await session.commitTransaction(); session.endSession();
+
+    const io = req.app.get('io') || req.app.locals.io;
+    io?.emit?.('proceso:updated', p);
+    if (result?.afectados?.length) io?.emit?.('stockUpdated', result.afectados);
+    if (entradaFinal?.stock)       io?.emit?.('stockUpdated', [entradaFinal.stock]);
+
+    res.json({ ok: true, proceso: p, stock: { descargas: result, entradaFinal: entradaFinal || null } });
+  } catch (e) {
+    await session.abortTransaction(); session.endSession();
+    res.status(500).json({ message: e.message || 'Error al finalizar proceso' });
   }
 };
