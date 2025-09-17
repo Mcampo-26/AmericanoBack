@@ -64,6 +64,22 @@ export async function applyMovimiento(args, opts = {}) {
           createdAt: now,
           updatedAt: now
         });
+        stock.lotes.push({
+          codigo: loteCodigo,
+          fechaVencimiento: fechaVencimiento || null,
+          cantidad: cantidad,                 // >0
+          cantidadInicial: Number(cantidad),  // ⬅️ NUEVO: para poder calcular "descontada"
+          costoUnitario: typeof costoUnitario === 'number'
+            ? costoUnitario
+            : (stock.ultimoCosto || 0),
+          origen: tipo || 'entrada',          // p.ej. 'compra' | 'produccion' | 'ajuste'
+          referenciaTipo: referenciaTipo || null,
+          referenciaId: referenciaId || null,
+          createdBy: usuarioId || null,
+          createdByNombre: req?.user?.nombre || undefined, // si no tenés req acá, omitilo
+          createdAt: now,
+          updatedAt: now
+        });
       } else {
         // Salida de lote inexistente
         throw new Error(`No existe el lote ${loteCodigo} para descontar`);
