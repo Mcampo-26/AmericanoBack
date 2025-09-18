@@ -10,10 +10,16 @@ import {
 /** GET /stock/all */
 export const listStock = async (req, res) => {
   try {
-    const { q, lowOnly } = req.query;
-    const data = await svcListStock({ q, lowOnly: lowOnly === "true" });
+    const { q = "", lowOnly = "false", page = 1, limit = 10 } = req.query;
+    const data = await svcListStock({
+      q,
+      lowOnly: lowOnly === "true",
+      page: Number(page),
+      limit: Number(limit)
+    });
     res.json(data);
   } catch (e) {
+    console.error("listStock error", e);
     res.status(500).json({ error: e.message });
   }
 };
@@ -21,18 +27,29 @@ export const listStock = async (req, res) => {
 /** GET /stock/:id */
 export const getStock = async (req, res) => {
   try {
-    const s = await Stock.findById(req.params.id)
-      .populate("producto", "nombre codigo codigoBarras");
-    if (!s) return res.status(404).json({ error: "Stock no encontrado" });
+    const { q, lowOnly } = req.query;
 
-    // 👇 evita 304 y cache del navegador/proxy
-    res.set('Cache-Control', 'no-store, max-age=0, must-revalidate');
-    res.set('Pragma', 'no-cache');
-    res.set('Expires', '0');
+    const filtro = {};
+    if (q) {
+      // 👇 aquí reemplazás el $text por regex
+      filtro.$or = [
+        { "producto.nombre": { $regex: q, $options: "i" } },
+        { "producto.codigo": { $regex: q, $options: "i" } }
+      ];
+    }
 
-    return res.json(s);
-  } catch (e) {
-    return res.status(500).json({ error: e.message });
+    if (lowOnly === "true") {
+      filtro.$expr = { $lt: ["$cantidadDisponible", "$stockMinimo"] };
+    }
+
+    const stock = await Stock.find(filtro)
+      .populate("producto")   // si usás ref a Producto
+      .lean();
+
+    res.json(stock);
+  } catch (err) {
+    console.error("❌ Error en getStock:", err);
+    res.status(500).json({ error: "Error al obtener stock" });
   }
 };
 
