@@ -7,6 +7,7 @@ import { applyMovimiento, descontarPorReceta } from '../../Service/stock.js';
 
 import Receta   from '../../Models/Receta/index.js';
 
+
 /**
  * GET /procesos
  * Admin ve todos; usuario solo los suyos
