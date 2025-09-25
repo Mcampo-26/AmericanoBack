@@ -1,12 +1,28 @@
 // services/stock.service.js
-
 import Stock from '../Models/Stock/index.js';
-import MovimientoStock from '../Models/MovimientoStock/index.js'
-import Receta from '../Models/Receta/index.js';;
-import Producto from '../Models/Producto/producto.js'; 
+import MovimientoStock from '../Models/MovimientoStock/index.js';
+import Receta from '../Models/Receta/index.js';
+import Producto from '../Models/Producto/producto.js';
 
+// util normalizador (único, no lo vuelvas a declarar)
+const norm = (s = '') =>
+  s.toString()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * Aplica un movimiento de stock (entrada/salida)
+ * opts: { session, capToAvailable, allowNegative, io }
+ */
 export const applyMovimiento = async (input, opts = {}) => {
-  const { session = null, capToAvailable = false, allowNegative = false } = opts;
+  const {
+    session = null,
+    capToAvailable = false,
+    allowNegative = false,
+    io = null,                 // <<<< permite emitir
+  } = opts;
 
   let {
     productoId, tipo, cantidad, unidad, costoUnitario,
@@ -20,15 +36,17 @@ export const applyMovimiento = async (input, opts = {}) => {
 
   const isEntrada = cantidad > 0;
 
+  console.log('[STOCK] applyMovimiento IN >>', {
+    productoId, tipo, cantidad, unidad, loteCodigo, ref: { referenciaTipo, referenciaId }
+  });
+
   const stock = await Stock.findOne({ producto: productoId }).session(session);
   if (!stock) throw new Error('Stock no encontrado');
   if (!Array.isArray(stock.lotes)) stock.lotes = [];
 
   // localizar lote si se indicó
   let lotIndex = -1;
-  if (loteCodigo) {
-    lotIndex = stock.lotes.findIndex(l => l.codigo === loteCodigo);
-  }
+  if (loteCodigo) lotIndex = stock.lotes.findIndex(l => l.codigo === loteCodigo);
 
   // ========= Validaciones y/o CAP =========
   if (!isEntrada) {
@@ -36,7 +54,6 @@ export const applyMovimiento = async (input, opts = {}) => {
     const dispTotal  = stock.lotes.length ? totalLotes : Number(stock.cantidadDisponible || 0);
     const dispLote   = (loteCodigo && lotIndex >= 0) ? Number(stock.lotes[lotIndex].cantidad || 0) : dispTotal;
 
-    // Si hay lotes y NO vino lote -> luego hacemos FIFO (cap después)
     if (!(stock.lotes.length && !loteCodigo) && capToAvailable) {
       const cap = loteCodigo ? dispLote : dispTotal;
       if (cap + cantidad < 0) cantidad = -cap;
@@ -50,7 +67,7 @@ export const applyMovimiento = async (input, opts = {}) => {
     }
   }
 
-  // ========= Salida sin lote → FIFO por lotes =========
+  // ========= Salida sin lote → FIFO =========
   let consumosPorLote = [];
   if (!isEntrada && !loteCodigo && stock.lotes.length) {
     const req = Math.abs(cantidad);
@@ -69,7 +86,6 @@ export const applyMovimiento = async (input, opts = {}) => {
       if (pendiente <= 0) break;
       const disp = Number(l.cantidad || 0);
       if (disp <= 0) continue;
-
       const desc = Math.min(disp, pendiente);
       l.cantidad = disp - desc;
       pendiente -= desc;
@@ -80,7 +96,6 @@ export const applyMovimiento = async (input, opts = {}) => {
       throw new Error('Stock de lotes insuficiente');
     }
 
-    // cantidad real aplicada (para el movimiento "global" si hiciera falta)
     const aplicado = req - pendiente;
     cantidad = -aplicado;
   }
@@ -92,29 +107,24 @@ export const applyMovimiento = async (input, opts = {}) => {
       l.cantidad = Math.max(0, Number(l.cantidad || 0) + cantidad);
       if (fechaVencimiento) l.fechaVencimiento = fechaVencimiento;
       if (isEntrada && typeof costoUnitario === 'number') l.costoUnitario = costoUnitario;
-    } else {
-      // crear lote solo en ENTRADAS
-      if (isEntrada) {
-        stock.lotes.push({
-          codigo: loteCodigo,
-          fechaVencimiento: fechaVencimiento || null,
-          cantidad: Math.max(0, cantidad),
-          costoUnitario: typeof costoUnitario === 'number' ? costoUnitario : undefined,
-          createdBy: usuarioId
-        });
-      }
-      // si es salida y el lote no existe: no creamos nada (queda en 0)
+    } else if (isEntrada) {
+      stock.lotes.push({
+        codigo: loteCodigo,
+        fechaVencimiento: fechaVencimiento || null,
+        cantidad: Math.max(0, cantidad),
+        costoUnitario: typeof costoUnitario === 'number' ? costoUnitario : undefined,
+        createdBy: usuarioId
+      });
     }
   }
 
-  // ========= Recalcular TOTAL SIEMPRE al final =========
+  // ========= Recalcular total =========
   if (stock.lotes.length) {
     stock.cantidadDisponible = stock.lotes.reduce((a, l) => a + Number(l.cantidad || 0), 0);
   } else {
     stock.cantidadDisponible = Number(stock.cantidadDisponible || 0) + cantidad;
   }
 
-  // Asegurar persistencia de cambios en subdocumentos
   if (stock.markModified) stock.markModified('lotes');
   await stock.save({ session });
 
@@ -150,29 +160,47 @@ export const applyMovimiento = async (input, opts = {}) => {
     movimientos = [mov];
   }
 
-  return { stock, movimiento: movimientos[0], movimientos };
+  const movimiento = movimientos[0];
+
+  console.log('[STOCK] applyMovimiento OUT <<', {
+    productoId: String(productoId),
+    cantidadNueva: stock.cantidadDisponible,
+    movId: movimiento?._id?.toString?.()
+  });
+
+  // ========= Emitir en tiempo real (si hay io) =========
+  io?.emit?.('movimiento:created', {
+    productoId,
+    movimiento,
+    stock
+  });
+  io?.emit?.('stock:changed', {
+    productoId,
+    stock,
+    reason: 'movimiento'
+  });
+
+  return { stock, movimiento, movimientos };
 };
-  export async function getStockByProducto(productoId) {
+
+export async function getStockByProducto(productoId) {
   return Stock
     .findOne({ producto: productoId })
     .populate('producto', 'nombre codigo codigoBarras');
 }
 
-
-const norm = (s='') => s
-  .toString()
-  .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-  .toLowerCase()
-  .replace(/\s+/g, ' ')
-  .trim();
-
-// Service/stock.js (o donde tengas la función)
+/**
+ * Descuenta insumos según receta (escala por cantidad).
+ * opts: { session, io }
+ */
 export async function descontarPorReceta(
   { recetaId, cantidad = 1, usuarioId, referenciaId, referenciaTipo = 'ProcesoProduccion' },
   opts = {}
 ) {
   if (!recetaId) throw new Error('recetaId es obligatorio');
+
   const session = opts.session || null;
+  const io = opts.io || null;
 
   const receta = await Receta.findById(recetaId).lean();
   if (!receta) throw new Error('Receta no encontrada');
@@ -180,18 +208,15 @@ export async function descontarPorReceta(
   const rindeBase = Number(receta.rindeBase ?? 1);
   const factor = Number(cantidad || 1) / (rindeBase || 1);
 
-  // 👇 filtrar nulos/indefinidos/valores no-objeto
   const ingredientesRaw = Array.isArray(receta.ingredientes) ? receta.ingredientes : [];
   const ingredientes = ingredientesRaw.filter(i => i && typeof i === 'object');
 
   const productos = await Producto.find({}, { _id: 1, nombre: 1 }).lean();
-  const norm = (s='') => s.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
   const mapPorNombre = new Map(productos.map(p => [norm(p.nombre), p]));
 
   const afectados = [];
 
   for (const ing of ingredientes) {
-    // ⛑️ si no tiene cantidad numérica válida, salteá
     const base = Number(ing?.cantidad ?? 0);
     if (!Number.isFinite(base) || base <= 0) continue;
 
@@ -221,7 +246,7 @@ export async function descontarPorReceta(
       referenciaId,
       notas: `Producción ${receta.nombre} x${cantidad}`,
       usuarioId
-    }, { session, capToAvailable: true, allowNegative: false });
+    }, { session, capToAvailable: true, allowNegative: false, io }); // << io propagado
 
     afectados.push({
       productoId: String(prodId),
@@ -233,26 +258,26 @@ export async function descontarPorReceta(
     });
   }
 
+  // Emisión “bulk” opcional (además de lo que ya emitió applyMovimiento)
+  if (io && afectados.length) {
+    io.emit('stockUpdated', afectados);
+  }
+
   return { recetaId: String(receta._id), cantidad: Number(cantidad || 1), rindeBase, afectados };
 }
 
-
-
+/**
+ * Listado de stock con filtros/paginación
+ */
 export const listStock = async ({ q = "", lowOnly = false, page = 1, limit = 10 }) => {
   const matchMain = {};
   if (lowOnly) matchMain.$expr = { $lt: ["$cantidadDisponible", "$stockMinimo"] };
 
   const pipeline = [
     { $match: matchMain },
-
-    // 👈 nombre real de la colección (modelo "Producto" → colección "productos")
     { $lookup: { from: "productos", localField: "producto", foreignField: "_id", as: "prod" } },
     { $unwind: "$prod" },
-
-    // opcional: sólo productos activos
     { $match: { "prod.activo": { $ne: false } } },
-
-    // filtro q sin $text
     ...(q ? [{
       $match: {
         $or: [
@@ -262,9 +287,7 @@ export const listStock = async ({ q = "", lowOnly = false, page = 1, limit = 10 
         ]
       }
     }] : []),
-
     { $sort: { updatedAt: -1, _id: -1 } },
-
     {
       $facet: {
         data:  [{ $skip: (Number(page)-1)*Number(limit) }, { $limit: Number(limit) }],
@@ -277,8 +300,6 @@ export const listStock = async ({ q = "", lowOnly = false, page = 1, limit = 10 
   const data  = agg[0]?.data  ?? [];
   const total = agg[0]?.total?.[0]?.count ?? 0;
 
-  // normalizar: mover prod → producto
   const items = data.map(d => ({ ...d, producto: d.prod, prod: undefined }));
-
   return { items, total, page: Number(page), limit: Number(limit) };
 };
