@@ -204,24 +204,34 @@ export const eliminarProceso = async (req, res) => {
 export const finalizarProceso = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
-  try {
-    const p = await ProcesoProduccion.findById(req.params.id).session(session);
-    if (!p) return res.status(404).json({ message: 'Proceso no encontrado' });
 
-    // ✅ Idempotencia: si ya está finalizado o ya hay movimientos de este proceso, no hagas nada
+  try {
+    const procesoId = req.params.id;
+    const io = req.app.get('io') || req.app.locals.io;
+
+    // 1) Cargar proceso
+    const p = await ProcesoProduccion.findById(procesoId).session(session);
+    if (!p) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(404).json({ message: 'Proceso no encontrado' });
+    }
+
+    // 2) Idempotencia (ya finalizado o ya tiene movimientos)
     const yaAplicado =
       p.status === 'finalizado' ||
       (await MovimientoStock.exists({
         referenciaTipo: 'ProcesoProduccion',
-        referenciaId: p._id
+        referenciaId: p._id,
       }).session(session));
 
     if (yaAplicado) {
       await session.commitTransaction(); session.endSession();
+      console.log('[PROC] finalizarProceso: ya aplicado', { procesoId: String(p._id) });
+      io?.emit?.('proceso:updated', p);
       return res.json({ ok: true, proceso: p, stock: null, alreadyFinalized: true });
     }
 
-    // marcar finalizado (acumula si estaba corriendo)
+    // 3) Marcar finalizado (acumula si estaba corriendo)
     if (p.status === 'en_proceso') {
       p.acumuladoMs += Date.now() - p.startedAt.getTime();
     }
@@ -231,24 +241,30 @@ export const finalizarProceso = async (req, res) => {
     // ===== STOCK =====
     const cantidadProducida = Number(req.body?.cantidadProducida || 1);
 
-    // 1) Descontar insumos (escala por receta, si no querés escalar, pasa 1)
+    // 4) Descontar insumos de la receta
     let result = null;
     if (p.recetaId) {
       result = await descontarPorReceta(
         {
           recetaId: p.recetaId,
-          cantidad: cantidadProducida, // ó 1 si no querés que dependa del rinde
+          cantidad: cantidadProducida,           // escalar por cantidad producida
           usuarioId: req.user?.id,
           referenciaId: p._id,
           referenciaTipo: 'ProcesoProduccion',
         },
         { session }
       );
+      console.log('[STOCK] descargas receta >>', {
+        procesoId: String(p._id),
+        afectados: (result?.afectados || []).length,
+      });
     }
 
-    // 2) Entrada del producto final (opcional)
+    // 5) Entrada del producto final (si corresponde)
     const recetaDoc = p.recetaId
-      ? await Receta.findById(p.recetaId).select('productoFinal unidadOutput').lean()
+      ? await Receta.findById(p.recetaId)
+          .select('productoFinal unidadOutput nombre')
+          .lean()
       : null;
 
     const productoFinalId =
@@ -266,23 +282,55 @@ export const finalizarProceso = async (req, res) => {
           fechaVencimiento: req.body.fechaVencimientoSalida || undefined,
           referenciaTipo: 'ProcesoProduccion',
           referenciaId: p._id,
-          notas: `Producción x${cantidadProducida}`,
+          notas: `Producción ${recetaDoc?.nombre || ''} x${cantidadProducida}`,
           usuarioId: req.user?.id,
         },
         { session }
       );
+      console.log('[STOCK] entrada producto final >>', {
+        procesoId: String(p._id),
+        productoId: String(productoFinalId),
+        cantidad: cantidadProducida,
+      });
     }
 
-    await session.commitTransaction(); session.endSession();
+    // 6) Commit
+    await session.commitTransaction();
+    session.endSession();
 
-    const io = req.app.get('io') || req.app.locals.io;
+    // 7) WebSocket: proceso actualizado
     io?.emit?.('proceso:updated', p);
-    if (result?.afectados?.length) io?.emit?.('stockUpdated', result.afectados);
-    if (entradaFinal?.stock)       io?.emit?.('stockUpdated', [entradaFinal.stock]);
+    console.log('[WS] proceso:updated', { procesoId: String(p._id) });
 
-    res.json({ ok: true, proceso: p, stock: { descargas: result, entradaFinal: entradaFinal || null } });
+    // 8) WebSocket: consumos (uno por afectado)
+    if (result?.afectados?.length) {
+      for (const a of result.afectados) {
+        const pid = String(a.productoId);
+        io?.emit?.('stock:changed', { productoId: pid, reason: 'consumo' });
+        console.log('[WS] stock:changed (consumo)', { productoId: pid });
+      }
+    }
+
+    // 9) WebSocket: entrada del producto final
+    if (entradaFinal?.stock?.producto) {
+      const pid = String(entradaFinal.stock.producto);
+      io?.emit?.('stock:changed', { productoId: pid, reason: 'produccion' });
+      console.log('[WS] stock:changed (produccion)', { productoId: pid });
+    }
+
+    // 10) Respuesta
+    return res.json({
+      ok: true,
+      proceso: p,
+      stock: {
+        descargas: result,
+        entradaFinal: entradaFinal || null,
+      },
+    });
   } catch (e) {
-    await session.abortTransaction(); session.endSession();
-    res.status(500).json({ message: e.message || 'Error al finalizar proceso' });
+    await session.abortTransaction();
+    session.endSession();
+    console.error('finalizarProceso error:', e);
+    return res.status(500).json({ message: e.message || 'Error al finalizar proceso' });
   }
 };
