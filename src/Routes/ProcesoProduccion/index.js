@@ -9,7 +9,8 @@ import {
   reanudarProceso,
   finalizarProceso,
   actualizarProcesoParcial, // 👈 NUEVO
-  eliminarProceso,         // 👈 opcional
+  eliminarProceso,  
+  cancelarProceso        // 👈 opcional
 } from "../../controllers/ProcesoProduccionControllers/index.js";
 
 const router = Router();
@@ -23,7 +24,7 @@ router.post("/", crearProceso);
 
 // ✅ PATCH genérico (para actualizar status, remainingMs, minimized, etc.)
 router.patch("/:id", actualizarProcesoParcial);
-
+router.patch("/:id/cancelar", cancelarProceso);
 // (opcional) DELETE por id
 router.delete("/:id", eliminarProceso);
 

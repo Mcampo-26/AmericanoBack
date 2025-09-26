@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import jwt from 'jsonwebtoken';
+import { logEvent } from "../../Service/log.service.js"; // <- del diseño de logs
 
 // 🔐 CREAR usuario
 export const createUsuario = async (req, res) => {
@@ -131,34 +132,97 @@ export const verifyUsuario = async (req, res) => {
 
   
   // 🔐 LOGIN de usuario
-  export const loginUsuario = async (req, res) => {
-    try {
-      const { email, password } = req.body;
-      // ✅ POPULATE CORRECTO: Traemos el rol completo
-      const usuario = await Usuario.findOne({ email }).populate('role'); 
-  
-      if (!usuario) {
-        return res.status(401).json({ message: 'Credenciales inválidas' });
-      }
-  
-      const isMatch = await bcrypt.compare(password, usuario.password);
-      if (!isMatch) {
-        return res.status(401).json({ message: 'Credenciales inválidas' });
-      }
-  
-      // ✅ TOKEN MÁS COMPLETO: Guardamos el objeto de rol completo si existe.
-      const token = jwt.sign({
+ // controllers/auth.js
+
+
+export const loginUsuario = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const usuario = await Usuario.findOne({ email }).populate("role");
+
+    if (!usuario) {
+      // 🔴 Log de intento fallido
+      await logEvent({
+        action: "auth.login",
+        result: "error",
+        meta: { reason: "user_not_found", email },
+        req
+      });
+      return res.status(401).json({ message: "Credenciales inválidas" });
+    }
+
+    const isMatch = await bcrypt.compare(password, usuario.password);
+    if (!isMatch) {
+      // 🔴 Log de intento fallido
+      await logEvent({
+        userId: usuario._id,
+        action: "auth.login",
+        result: "error",
+        meta: { reason: "bad_password", email },
+        req
+      });
+      return res.status(401).json({ message: "Credenciales inválidas" });
+    }
+
+    // ✅ Generamos un sessionId para esta sesión (útil para medir inicio/fin)
+    const sessionId = crypto.randomUUID();
+
+    // ✅ Token con datos del usuario + sessionId
+    const token = jwt.sign(
+      {
         id: usuario._id,
         nombre: usuario.nombre,
         email: usuario.email,
+        sessionId,
         role: usuario.role ? { name: usuario.role.name, permisos: usuario.role.permisos } : null,
-      }, process.env.JWT_SECRET, { expiresIn: '8h' }); // Aumentamos la duración
-  
-      // ✅ RESPUESTA CONSISTENTE: Devolvemos el token y el objeto usuario completo.
-      res.json({ token, usuario: usuario.toObject() });
-  
-    } catch (error) {
-      console.error("Error en login:", error);
-      res.status(500).json({ message: 'Error durante el login' });
-    }
-  };
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "8h" }
+    );
+
+    // 🟢 Log de login OK
+    await logEvent({
+      userId: usuario._id,
+      sessionId,
+      action: "auth.login",
+      result: "ok",
+      meta: { role: usuario.role?.name, permisos: usuario.role?.permisos ?? [] },
+      req
+    });
+
+    // ✅ Respuesta consistente
+    res.json({
+      token,
+      sessionId,
+      usuario: usuario.toObject(),
+    });
+  } catch (error) {
+    console.error("Error en login:", error);
+    // 🔴 Log de error inesperado
+    await logEvent({
+      action: "auth.login",
+      result: "error",
+      meta: { reason: "exception", message: error?.message },
+      req
+    });
+    res.status(500).json({ message: "Error durante el login" });
+  }
+};
+
+
+export const logoutUsuario = async (req, res) => {
+  try {
+    // `req.user` debería venir del middleware de auth JWT (decodifica token)
+    await logEvent({
+      userId: req.user?.id,
+      sessionId: req.user?.sessionId,
+      action: "auth.logout",
+      result: "ok",
+      req
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    await logEvent({ action: "auth.logout", result: "error", meta: { message: e?.message }, req });
+    res.status(500).json({ message: "Error durante el logout" });
+  }
+};
