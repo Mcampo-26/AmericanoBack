@@ -16,20 +16,18 @@ import Receta   from '../../Models/Receta/index.js';
 
 export const listarProcesos = async (req, res) => {
   try {
-    // ✅ LÓGICA DE ROL CORREGIDA Y ROBUSTA
-    const isAdmin = req.user?.role?.name === 'Admin' || // Comprueba el objeto role.name
-                    req.user?.permisos?.includes('admin'); // Mantiene la comprobación de permisos por si acaso
-
-    // El resto de la lógica ya es correcta
+    const isAdmin = req.user?.role?.name === "Admin" || req.user?.permisos?.includes("admin");
     const query = isAdmin ? {} : { usuarioId: req.user.id };
-    query.status = { $ne: 'finalizado' };
+
+    query.status = { $ne: "finalizado" };
+    query.cancelado = { $ne: true }; // <- si agregaste el flag
 
     const procesosFromDB = await ProcesoProduccion.find(query).sort({ createdAt: -1 });
-
     const ahora = Date.now();
+
     const procesosActualizados = procesosFromDB.map(p => {
       const pObj = p.toObject();
-      if (pObj.status === 'en_proceso') {
+      if (pObj.status === "en_proceso") {
         const tiempoTranscurrido = ahora - new Date(pObj.startedAt).getTime();
         const tiempoAcumulado = pObj.acumuladoMs || 0;
         pObj.remainingMs = Math.max(0, pObj.duracionMs - (tiempoAcumulado + tiempoTranscurrido));
@@ -332,5 +330,54 @@ export const finalizarProceso = async (req, res) => {
     session.endSession();
     console.error('finalizarProceso error:', e);
     return res.status(500).json({ message: e.message || 'Error al finalizar proceso' });
+  }
+};
+
+
+
+export const cancelarProceso = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const motivo = (req.body?.motivo || "").trim();
+
+    const p = await ProcesoProduccion.findById(id);
+    if (!p) return res.status(404).json({ message: "Proceso no encontrado" });
+
+    // acumular tiempo si estaba corriendo
+    if (p.status === "en_proceso" && p.startedAt) {
+      p.acumuladoMs = (p.acumuladoMs || 0) + (Date.now() - new Date(p.startedAt).getTime());
+    }
+
+    p.status = "finalizado";
+    await p.save();
+
+    // emitir por websocket si usás sockets
+    req.app.get("io")?.emit("proceso:updated", p);
+
+    // opcional: loguear desde el back (puedes quitar si lo hacés en el front)
+    try {
+      await LogEvento.create({
+        ts: new Date(),
+        userId: req.user?.id || null,
+        sessionId: req.user?.sessionId || null,
+        action: "prod.cancel",
+        entity: "Proceso",
+        entityId: String(p._id),
+        result: "info",
+        meta: {
+          estado: "Proceso cancelado",
+          motivo: motivo || null,
+          nombreReceta: p?.nombreReceta || null,
+          usuarioNombre: req.user?.nombre || req.user?.email || null,
+        },
+        ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress,
+        userAgent: req.headers["user-agent"],
+      });
+    } catch (_) {}
+
+    return res.json(p);
+  } catch (e) {
+    console.error("cancelarProceso:", e);
+    return res.status(500).json({ message: "Error al cancelar proceso" });
   }
 };

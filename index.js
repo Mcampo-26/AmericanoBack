@@ -20,6 +20,8 @@ import stockRoutes from './src/Routes/Stock/index.js';
 import movimientosRoutes from './src/Routes/movimientosRoutes/index.js';
 import comprasRoutes from './src/Routes/Compras/index.js'
 
+import logsRoutes from './src/Routes/Logs/index.js';
+
 const app = express();
 const server = http.createServer(app);
 
@@ -69,7 +71,7 @@ app.use('/ingredientes', ingredientesRoutes);
 app.use('/stock', stockRoutes);
 app.use('/movimientos', movimientosRoutes);
 app.use('/compras', comprasRoutes);
-
+app.use('/log', logsRoutes);
 
 // WebSocket connection
 io.on('connection', (socket) => {
