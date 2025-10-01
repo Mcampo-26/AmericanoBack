@@ -212,13 +212,12 @@ export const loginUsuario = async (req, res) => {
 
 export const logoutUsuario = async (req, res) => {
   try {
-    // `req.user` debería venir del middleware de auth JWT (decodifica token)
     await logEvent({
-      userId: req.user?.id,
+      userId: req.user?.id,          // viene del JWT via authMiddleware
       sessionId: req.user?.sessionId,
       action: "auth.logout",
       result: "ok",
-      req
+      req,
     });
     res.json({ ok: true });
   } catch (e) {

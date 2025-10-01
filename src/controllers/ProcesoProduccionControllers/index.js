@@ -1,7 +1,7 @@
 import mongoose from 'mongoose'
 import ProcesoProduccion from "../../Models/ProcesoProduccion/index.js";
 // controllers
-
+import LogEvento from '../../Models/Logs/index.js';
 import MovimientoStock from '../../Models/MovimientoStock/index.js';
 import { applyMovimiento, descontarPorReceta } from '../../Service/stock.js';
 

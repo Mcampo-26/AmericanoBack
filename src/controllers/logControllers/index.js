@@ -1,75 +1,125 @@
+// src/controllers/logsController.js
 import LogEvento from "../../Models/Logs/index.js";
 
-// Helpers tolerantes a fecha (YYYY-MM-DD o ISO)
+/* ----------------- helpers de fecha y parsing ----------------- */
 const normDesde = (s) => (s?.includes("T") ? s : `${s}T00:00:00`);
 const normHasta = (s) => (s?.includes("T") ? s : `${s}T23:59:59`);
+const toBool = (v) => v === true || v === "true" || v === "1";
 
+/* =========================== LISTAR =========================== */
 export const listarLogs = async (req, res) => {
   try {
-    const { userId, action, desde, hasta, page = 1, limit = 50, hideHb } = req.query;
+    const page  = Math.max(1, Number(req.query.page ?? 1));
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
 
-    const q = {};
-    if (userId) q.userId = userId;
-    if (action) q.action = action;
-    if (hideHb) q.action = { $ne: "ui.heartbeat" };
-    if (desde || hasta) {
-      q.ts = {};
-      if (desde) q.ts.$gte = new Date(desde.includes("T") ? desde : `${desde}T00:00:00`);
-      if (hasta) q.ts.$lte = new Date(hasta.includes("T") ? hasta : `${hasta}T23:59:59`);
+    const nombre = (req.query.nombre || req.query.q || "").trim();
+    const evento = (req.query.evento || req.query.action || "").trim();
+    const hideHb = toBool(req.query.hideHb);   // 👈 nuevo
+    const desdeQ = req.query.desde ? new Date(normDesde(req.query.desde)) : null;
+    const hastaQ = req.query.hasta ? new Date(normHasta(req.query.hasta)) : null;
+
+    const and = [];
+    if (evento) and.push({ action: evento });
+    if (hideHb) and.push({ action: { $ne: "ui.heartbeat" } }); // 👈 excluir heartbeats
+
+    if (nombre) {
+      const re = new RegExp(nombre.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      and.push({
+        $or: [
+          { "meta.usuarioNombre": re },
+          { "user.nombre": re },
+          { "user.email": re },
+        ],
+      });
     }
 
-    const skip = (Number(page) - 1) * Number(limit);
+    if (desdeQ || hastaQ) {
+      const ts = {};
+      if (desdeQ) ts.$gte = desdeQ;
+      if (hastaQ) ts.$lte = hastaQ;
+      and.push({ ts });
+    }
 
-    const docs = await LogEvento.find(q)
+    const query = and.length ? { $and: and } : {};
+    const skip = (page - 1) * limit;
+
+    const docs = await LogEvento.find(query)
       .sort({ ts: -1 })
       .skip(skip)
-      .limit(Number(limit))
-      .populate("userId", "nombre email")        // ← importante
+      .limit(limit)
+      .populate("userId", "nombre email")
       .lean();
 
-    // Normalizamos 'user' para el frontend
-    const items = docs.map(d => ({
+    const items = docs.map((d) => ({
       ...d,
-      user: d.userId && typeof d.userId === "object"
-        ? { _id: d.userId._id, nombre: d.userId.nombre, email: d.userId.email }
-        : null
+      user:
+        d.userId && typeof d.userId === "object"
+          ? { _id: d.userId._id, nombre: d.userId.nombre, email: d.userId.email }
+          : d.user || null,
     }));
 
-    const total = await LogEvento.countDocuments(q);
-    res.json({ items, total, page: Number(page), limit: Number(limit) });
+    const total = await LogEvento.countDocuments(query);
+    res.json({ items, total, page, limit });
   } catch (e) {
     res.status(500).json({ message: "Error listando logs", error: e.message });
   }
 };
-// POST /api/log/heartbeat  { active, tsClient }
+
+/* ======================== HEARTBEAT =========================== */
+// POST /api/log/heartbeat  { active: boolean, tsClient?: ISO }
 export const registrarHeartbeat = async (req, res) => {
   try {
+    const usuarioNombre = req.user?.nombre || req.user?.email || undefined;
+
     await LogEvento.create({
       ts: new Date(),
-      userId: req.user?.id || null,           // si tu auth middleware setea req.user
+      userId: req.user?._id || req.user?.id || null,
+      user: req.user
+        ? {
+            _id: req.user._id || req.user.id,
+            nombre: req.user.nombre,
+            email: req.user.email,
+            role: req.user?.role?.name || req.user?.role,
+          }
+        : undefined,
       sessionId: req.user?.sessionId || null,
       action: "ui.heartbeat",
+      entity: "ui",
+      entityId: req.user?.sessionId || undefined,
       result: "info",
-      meta: { active: !!req.body?.active, tsClient: req.body?.tsClient },
-      ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress,
+      meta: {
+        active: !!req.body?.active,
+        tsClient: req.body?.tsClient,
+        usuarioNombre, // siempre que podamos
+      },
+      ip: req.headers["x-forwarded-for"] || req.socket?.remoteAddress,
       userAgent: req.headers["user-agent"],
     });
+
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ message: "Error registrando heartbeat", error: e.message });
   }
 };
 
-// (Opcionales) endpoints para paneles rápidos:
+/* ===================== SESIONES DEL DÍA ======================= */
+// GET /api/log/sesiones-del-dia?userId=...&fecha=YYYY-MM-DD
 export const sesionesDelDia = async (req, res) => {
   try {
     const { userId, fecha } = req.query;
-    const start = new Date(`${fecha}T00:00:00`);
-    const end   = new Date(`${fecha}T23:59:59`);
+    if (!userId || !fecha) {
+      return res.status(400).json({ message: "userId y fecha son requeridos" });
+    }
+    const start = new Date(normDesde(fecha));
+    const end = new Date(normHasta(fecha));
 
     const eventos = await LogEvento.find({
-      userId, action: { $in: ["auth.login","auth.logout"] }, ts: { $gte: start, $lte: end }
-    }).sort({ ts: 1 }).lean();
+      userId,
+      action: { $in: ["auth.login", "auth.logout"] },
+      ts: { $gte: start, $lte: end },
+    })
+      .sort({ ts: 1 })
+      .lean();
 
     const porSesion = new Map();
     for (const ev of eventos) {
@@ -79,32 +129,42 @@ export const sesionesDelDia = async (req, res) => {
 
     const sesiones = [];
     for (const [sid, evs] of porSesion) {
-      const login = evs.find(e => e.action === "auth.login");
-      const logout = [...evs].reverse().find(e => e.action === "auth.logout");
+      const login = evs.find((e) => e.action === "auth.login");
+      const logout = [...evs].reverse().find((e) => e.action === "auth.logout");
       if (login) {
         sesiones.push({
           sessionId: sid,
           inicio: login.ts,
           fin: logout?.ts || null,
-          duracionMs: logout ? (new Date(logout.ts) - new Date(login.ts)) : null
+          duracionMs: logout ? new Date(logout.ts) - new Date(login.ts) : null,
         });
       }
     }
+
     res.json(sesiones);
   } catch (e) {
     res.status(500).json({ message: "Error sesiones", error: e.message });
   }
 };
 
+/* ===================== PRODUCCIÓN DEL DÍA ===================== */
+// GET /api/log/produccion-dia?userId=...&fecha=YYYY-MM-DD
 export const produccionDia = async (req, res) => {
   try {
     const { userId, fecha } = req.query;
-    const start = new Date(`${fecha}T00:00:00`);
-    const end   = new Date(`${fecha}T23:59:59`);
+    if (!userId || !fecha) {
+      return res.status(400).json({ message: "userId y fecha son requeridos" });
+    }
+    const start = new Date(normDesde(fecha));
+    const end = new Date(normHasta(fecha));
 
     const eventos = await LogEvento.find({
-      userId, action: { $in: ["prod.start","prod.end"] }, ts: { $gte: start, $lte: end }
-    }).sort({ ts: 1 }).lean();
+      userId,
+      action: { $in: ["prod.start", "prod.finish"] }, // unificado
+      ts: { $gte: start, $lte: end },
+    })
+      .sort({ ts: 1 })
+      .lean();
 
     const porProceso = new Map();
     for (const ev of eventos) {
@@ -116,31 +176,42 @@ export const produccionDia = async (req, res) => {
 
     let totalMs = 0;
     for (const [, evs] of porProceso) {
-      const s = evs.find(e => e.action === "prod.start");
-      const f = [...evs].reverse().find(e => e.action === "prod.end");
-      if (s && f) totalMs += (new Date(f.ts) - new Date(s.ts));
+      const s = evs.find((e) => e.action === "prod.start");
+      const f = [...evs].reverse().find((e) => e.action === "prod.finish");
+      if (s && f) totalMs += new Date(f.ts) - new Date(s.ts);
     }
+
     res.json({ totalMs });
   } catch (e) {
     res.status(500).json({ message: "Error producción", error: e.message });
   }
 };
 
+/* ========================= OCIO DEL DÍA ======================= */
+// Proxy simple de inactividad basada en gaps de heartbeats
+// GET /api/log/ocio-dia?userId=...&fecha=YYYY-MM-DD
 export const ocioDia = async (req, res) => {
   try {
     const { userId, fecha } = req.query;
-    const start = new Date(`${fecha}T00:00:00`);
-    const end   = new Date(`${fecha}T23:59:59`);
+    if (!userId || !fecha) {
+      return res.status(400).json({ message: "userId y fecha son requeridos" });
+    }
+    const start = new Date(normDesde(fecha));
+    const end = new Date(normHasta(fecha));
 
     const beats = await LogEvento.find({
-      userId, action: "ui.heartbeat", ts: { $gte: start, $lte: end }
-    }).sort({ ts: 1 }).lean();
+      userId,
+      action: "ui.heartbeat",
+      ts: { $gte: start, $lte: end },
+    })
+      .sort({ ts: 1 })
+      .lean();
 
     let ocioMs = 0;
     const UMBRAL = 120_000; // 2min
     for (let i = 1; i < beats.length; i++) {
-      const gap = new Date(beats[i].ts) - new Date(beats[i-1].ts);
-      if (gap > UMBRAL) ocioMs += (gap - UMBRAL);
+      const gap = new Date(beats[i].ts) - new Date(beats[i - 1].ts);
+      if (gap > UMBRAL) ocioMs += gap - UMBRAL;
     }
     res.json({ ocioMs });
   } catch (e) {
@@ -148,26 +219,33 @@ export const ocioDia = async (req, res) => {
   }
 };
 
+/* ======================== REGISTRAR EVENTO ==================== */
+// POST /api/log/evento  { action, entity?, entityId?, result?, meta? }
 export const registrarEvento = async (req, res) => {
   try {
     const { action, entity, entityId, result = "ok", meta = {} } = req.body || {};
     if (!action) return res.status(400).json({ message: "action requerido" });
 
-    const metaConUsuario = {
-      ...meta,
-      usuarioNombre: meta.usuarioNombre || req.user?.nombre || req.user?.email || undefined,
-    };
+    const usuarioNombre = meta.usuarioNombre || req.user?.nombre || req.user?.email || undefined;
 
     const ev = await LogEvento.create({
       ts: new Date(),
-      userId: req.user?.id || null,
+      userId: req.user?._id || req.user?.id || null,
+      user: req.user
+        ? {
+            _id: req.user._id || req.user.id,
+            nombre: req.user.nombre,
+            email: req.user.email,
+            role: req.user?.role?.name || req.user?.role,
+          }
+        : undefined,
       sessionId: req.user?.sessionId || null,
       action,
       entity,
-      entityId,
+      entityId: entityId ? String(entityId) : undefined,
       result,
-      meta: metaConUsuario,
-      ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress,
+      meta: { ...meta, usuarioNombre },
+      ip: req.headers["x-forwarded-for"] || req.socket?.remoteAddress,
       userAgent: req.headers["user-agent"],
     });
 
