@@ -1,3 +1,4 @@
+// src/routes/usuarios/index.js
 import express from 'express';
 import {
   createUsuario,
@@ -5,21 +6,22 @@ import {
   updateUsuario,
   deleteUsuario,
   verifyUsuario,
-  loginUsuario
+  loginUsuario,
+  logoutUsuario,                 // 👈 agregar
 } from '../../controllers/usuariosControllers/index.js';
+import { authMiddleware } from '../../Middleware/authMiddleware.js'; // 👈 usar tu middleware
 
 const router = express.Router();
 
-// 🔐 Autenticación
+// 🔐 Auth
 router.post('/login', loginUsuario);
 router.post('/verificar', verifyUsuario);
+router.post('/logout', authMiddleware, logoutUsuario); // 👈 proteger y loguear
 
-// 📌 CRUD de usuarios
-router.post('/create', createUsuario); // ✅ ahora usa /usuarios/create
+// 📌 CRUD
+router.post('/create', createUsuario);
 router.get('/', getUsuarios);
-router.put('/update/:id', updateUsuario); 
-
-
+router.put('/update/:id', updateUsuario);
 router.delete('/:id', deleteUsuario);
 
 export default router;
